@@ -388,17 +388,29 @@ void send_HA_discovery(){
 
 }
 
+void connect_mqtt() {
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    std::string topic = root_topic +"/"+project_topic;
+    if (client.connect(hostname.c_str(), mqtt_user.c_str(), mqtt_password.c_str())) {
+      Serial.println("connected");
+      client.subscribe(topic.c_str());
+      Serial.println(("Successfully subscribed to "+ topic).c_str());
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" will try again in 5 seconds");
+      delay(5000);
+    }
+  }
+}
+
 void setup_mqtt() {
   Serial.println("Connecting to MQTT...");
   client.setServer(mqtt_server.c_str(), mqtt_port);
   client.setCallback(callback);
 
-  client.connect(hostname.c_str(), mqtt_user.c_str(), mqtt_password.c_str());
-  while (!client.connected()) {
-    Serial.println("MQTT connect failed, retrying...");
-    delay(100);
-    client.connect(hostname.c_str(), mqtt_user.c_str(), mqtt_password.c_str());
-  }
+  connect_mqtt();
   Serial.println("Sending HA discovery...");
   send_HA_discovery(); // send MQTT payload for HA MQTT discovery
 
@@ -411,21 +423,6 @@ void setup() {
   sensor.begin(57600);
   setup_wifi();
   setup_mqtt();
-
-  std::string topic = root_topic +"/"+project_topic;
-  unsigned int retries = 0;
-  while (!client.subscribe(topic.c_str())){
-    if (retries < max_topic_subscription_retries){
-      Serial.println(("Failed to subscribe to "+ topic +". Retrying in 3s").c_str());
-      Serial.println(10-retries + "remaining");
-      delay(3000);
-    } else {
-      Serial.println("Max retries reached. Please check your Config. Restarting...");
-      ESP.restart();
-    }
-  }
-  Serial.println(("Successfully subscribed to "+ topic).c_str());
-
 }
 
 void loop() {
@@ -435,7 +432,7 @@ void loop() {
   }
   if (!client.connected()){
     Serial.println("MQTT client disconnected. Restarting...");
-    ESP.restart();
+    connect_mqtt();
   }
   client.loop();
 
