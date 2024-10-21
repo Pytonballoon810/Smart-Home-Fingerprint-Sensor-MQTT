@@ -15,6 +15,7 @@ const std::string mqtt_user = SECRET_MQTT_USER; // MQTT username in hasio
 const std::string mqtt_password = SECRET_MQTT_PASSWORD; // MQTT password
 const int mqtt_interval = 5000; // MQTT rate limiting if no finger present
 const unsigned int max_topic_subscription_retries = 10; // Maximum number of tries to subscribe to the required MQTT Channels. DO NOT CHANGE! (unless you really want to :shrug:)
+uint16_t mqtt_buffer_size = 512;
 
 const std::string root_topic = "fingerprint_sensor"; // root MQTT topic for all fingerprint sensors
 const std::string project_topic = "front_door"; // project MQTT topic for just this one sensor. Change this if you plan to install multiple fingerprint sensors.
@@ -86,14 +87,25 @@ void callback(char* topic, byte* payload, unsigned int length){
   for (int i = 0; i < length; i++){
     message += (char)payload[i];
   }
+  std::string topic_str(topic);
+  Serial.println("Topic:");
+  Serial.println(topic_str.c_str());
+  Serial.println("Message:");
+  Serial.println(message.c_str());
 
-  StaticJsonDocument<200> doc;
-  DeserializationError error = deserializeJson(doc, message);
-  if (error){
-    return;
-  }
+  // StaticJsonDocument<200> doc;
+  // DeserializationError error = deserializeJson(doc, message);
+  // if (error){
+  //   return;
+  // }
 
-  if (topic == (root_topic + "/" + project_topic + "/set_learning_mode").c_str()) {
+  const std::string learning_topic = root_topic + "/" + project_topic + "/set_learning_mode";
+  const std::string delete_topic = root_topic + "/" + project_topic + "/delete_user";
+
+  Serial.println(topic_str.c_str());
+  Serial.println(learning_topic.c_str());
+
+  if (topic_str.compare(learning_topic) == 0) {
     // Handle set learning mode
     Serial.println("Ready to enroll a fingerprint!");
     Serial.println("Please type in the ID # (from 1 to 127) you want to save this finger as...");
@@ -103,7 +115,7 @@ void callback(char* topic, byte* payload, unsigned int length){
     while(!get_fingerprint_enroll())
     return;
   }
-  else if (topic == (root_topic + "/" + project_topic + "/delete_user").c_str()) {
+  else if (topic == delete_topic) {
     // Handle delete user
     return;
   }
@@ -294,9 +306,8 @@ uint8_t get_fingerprint_enroll(){
 
 void send_HA_discovery(){
   // followed docs at https://www.home-assistant.io/integrations/mqtt/#configuration-via-mqtt-discovery
-  const std::string status_payload = "{\"device_class\":\"sensor\",\"state_topic\":\"" + root_topic + "/" + project_topic + "/status\",\"value_template\":\"{{ value_json.status }}\",\"unique_id\":\"" + root_topic + "_" + project_topic + "_status\",\"name\":\"Fingerprint Sensor Status " + project_topic + "\",\"device\":{\"identifiers\":[\"" + root_topic + "_" + project_topic + "_001\"],\"name\":\"" + name + "\",\"manufacturer\":\"" + manufacturer + "\",\"model\":\"" + model + "\",\"hw_version\":\"" + hw_version + "\",\"sw_version\":\"" + sw_version + "\"}}";
+  const std::string status_payload = "{\"state_topic\":\"" + root_topic + "/" + project_topic + "/status\",\"value_template\":\"{{ value }}\",\"unique_id\":\"" + root_topic + "_" + project_topic + "_status\",\"name\":\"Fingerprint Sensor Status " + project_topic + "\",\"device\":{\"identifiers\":[\"" + root_topic + "_" + project_topic + "_001\"],\"name\":\"" + name + "\",\"manufacturer\":\"" + manufacturer + "\",\"model\":\"" + model + "\",\"hw_version\":\"" + hw_version + "\",\"sw_version\":\"" + sw_version + "\"}}";
 // {
-//   "device_class": "sensor",
 //   "state_topic": "root_topic/project_topic/status",
 //   "value_template": "{{ value_json.status }}",
 //   "unique_id": "root_topic_project_topic_status",
@@ -310,11 +321,14 @@ void send_HA_discovery(){
 //     "sw_version": "sw_version"
 //   }
 // }
-  client.publish(("homeassistant/sensor/" + root_topic + "/" + project_topic + "_status/config").c_str(), status_payload.c_str(), true);
+  Serial.println("Sending Payload:");
+  Serial.println(status_payload.c_str());
+  bool status_payload_out = client.publish(("homeassistant/sensor/" + root_topic + "/" + project_topic + "_status/config").c_str(), status_payload.c_str(), true);
+  Serial.print("Code: ");
+  Serial.println(status_payload_out);
 
-  const std::string match_state_payload = "{\"device_class\":\"sensor\",\"state_topic\":\"" + root_topic + "/" + project_topic + "/match_state\",\"value_template\":\"{{ value_json.match_state }}\",\"unique_id\":\"" + root_topic + "_" + project_topic + "_match_state\",\"name\":\"Fingerprint Match State " + project_topic + "\",\"device\":{\"identifiers\":[\"" + root_topic + "_" + project_topic + "_001\"]}}";
+  const std::string match_state_payload = "{\"state_topic\":\"" + root_topic + "/" + project_topic + "/match_state\",\"value_template\":\"{{ value }}\",\"unique_id\":\"" + root_topic + "_" + project_topic + "_match_state\",\"name\":\"Fingerprint Match State " + project_topic + "\",\"device\":{\"identifiers\":[\"" + root_topic + "_" + project_topic + "_001\"]}}";
 // {
-//   "device_class": "sensor",
 //   "state_topic": "root_topic/project_topic/match_state",
 //   "value_template": "{{ value_json.match_state }}",
 //   "unique_id": "root_topic_project_topic_match_state",
@@ -323,11 +337,14 @@ void send_HA_discovery(){
 //     "identifiers": ["root_topic_project_topic_001"]
 //   }
 // }
-  client.publish(("homeassistant/sensor/" + root_topic + "/" + project_topic + "_match_state/config").c_str(), match_state_payload.c_str(), true);
+  Serial.println("Sending Payload:");
+  Serial.println(match_state_payload.c_str());
+  bool match_state_payload_out = client.publish(("homeassistant/sensor/" + root_topic + "/" + project_topic + "_match_state/config").c_str(), match_state_payload.c_str(), true);
+  Serial.print("Code: ");
+  Serial.println(match_state_payload_out);
 
-  const std::string last_match_payload = "{\"device_class\": \"sensor\",\"state_topic\": \"" + root_topic + "/" + project_topic + "/last_match\",\"value_template\": \"{{ value_json.last_match }}\",\"unique_id\": \"" + root_topic + "_" + project_topic + "_last_match\",\"name\": \"Last Matched Person " + project_topic + "\",\"device\": {\"identifiers\": [\"" + root_topic + "_" + project_topic + "_001\"]}}";
+  const std::string last_match_payload = "{\"state_topic\": \"" + root_topic + "/" + project_topic + "/last_match\",\"value_template\": \"{{ value }}\",\"unique_id\": \"" + root_topic + "_" + project_topic + "_last_match\",\"name\": \"Last Matched Person " + project_topic + "\",\"device\": {\"identifiers\": [\"" + root_topic + "_" + project_topic + "_001\"]}}";
 // {
-//   "device_class": "sensor",
 //   "state_topic": "root_topic/project_topic/last_match",
 //   "value_template": "{{ value_json.last_match }}",
 //   "unique_id": "root_topic_project_topic_last_match",
@@ -336,31 +353,43 @@ void send_HA_discovery(){
 //     "identifiers": ["root_topic_project_topic_001"]
 //   }
 // }
-  client.publish(("homeassistant/sensor/" + root_topic + "/" + project_topic + "_last_match/config").c_str(), last_match_payload.c_str(), true);
+  Serial.println("Sending Payload:");
+  Serial.println(last_match_payload.c_str());
+  bool last_match_payload_out = client.publish(("homeassistant/sensor/" + root_topic + "/" + project_topic + "_last_match/config").c_str(), last_match_payload.c_str(), true);
+  Serial.print("Code: ");
+  Serial.println(match_state_payload_out);
 
-  const std::string set_learning_mode_payload = "{\"command_topic\":\"" + root_topic + "/" + project_topic + "/set_learning_mode\",\"payload_press\":\"ON\",\"unique_id\":\"" + root_topic + "_" + project_topic + "_set_learning_mode\",\"name\":\"Set Learning Mode " + project_topic + "\",\"device\":{\"identifiers\":[\"" + root_topic + "_" + project_topic + "_001\"]}}";
+  const std::string set_learning_mode_payload = "{\"command_topic\":\"" + root_topic + "/" + project_topic + "/set_learning_mode\",\"payload_press\":\"PRESS\",\"unique_id\":\"" + root_topic + "_" + project_topic + "_set_learning_mode\",\"name\":\"Set Learning Mode " + project_topic + "\",\"device\":{\"identifiers\":[\"" + root_topic + "_" + project_topic + "_001\"]}}";
 // {
 //   "command_topic": "root_topic/project_topic/set_learning_mode",
-//   "payload_press": "ON",
+//   "payload_press": "PRESS",
 //   "unique_id": "root_topic_project_topic_set_learning_mode",
 //   "name": "Set Learning Mode project_topic",
 //   "device": {
 //     "identifiers": ["root_topic_project_topic_001"]
 //   }
 // }
-  client.publish(("homeassistant/button/" + root_topic + "/" + project_topic + "_set_learning_mode/config").c_str(), set_learning_mode_payload.c_str(), true);
+  Serial.println("Sending Payload:");
+  Serial.println(last_match_payload.c_str());
+  bool set_learning_mode_payload_out = client.publish(("homeassistant/button/" + root_topic + "/" + project_topic + "_set_learning_mode/config").c_str(), set_learning_mode_payload.c_str(), true);
+  Serial.print("Code: ");
+  Serial.println(set_learning_mode_payload_out);
 
-  const std::string delete_user_payload = "{\"command_topic\":\"" + root_topic + "/" + project_topic + "/delete_user\",\"payload_press\":\"ON\",\"unique_id\":\"" + root_topic + "_" + project_topic + "_delete_user\",\"name\":\"Delete User " + project_topic + "\",\"device\":{\"identifiers\":[\"" + root_topic + "_" + project_topic + "_001\"]}}";
+  const std::string delete_user_payload = "{\"command_topic\":\"" + root_topic + "/" + project_topic + "/delete_user\",\"payload_press\":\"PRESS\",\"unique_id\":\"" + root_topic + "_" + project_topic + "_delete_user\",\"name\":\"Delete User " + project_topic + "\",\"device\":{\"identifiers\":[\"" + root_topic + "_" + project_topic + "_001\"]}}";
 // {
 //   "command_topic": "root_topic/project_topic/delete_user",
-//   "payload_press": "ON",
+//   "payload_press": "PRESS",
 //   "unique_id": "root_topic_project_topic_delete_user",
 //   "name": "Delete User project_topic",
 //   "device": {
 //     "identifiers": ["root_topic_project_topic_001"]
 //   }
 // }
-  client.publish(("homeassistant/button/" + root_topic + "/" + project_topic + "_delete_user/config").c_str(), delete_user_payload.c_str(), true);
+  Serial.println("Sending Payload:");
+  Serial.println(last_match_payload.c_str());
+  bool delete_user_payload_out = client.publish(("homeassistant/button/" + root_topic + "/" + project_topic + "_delete_user/config").c_str(), delete_user_payload.c_str(), true);
+  Serial.print("Code: ");
+  Serial.println(delete_user_payload_out);
 
   const std::string set_user_id_payload = "{\"command_topic\":\"" + root_topic + "/" + project_topic + "/set_user_id\",\"value_template\":\"{{ value_json.user_id }}\",\"unique_id\":\"" + root_topic + "_" + project_topic + "_set_user_id\",\"name\":\"User ID Input " + project_topic + "\",\"device\":{\"identifiers\":[\"" + root_topic + "_" + project_topic + "_001\"]}}";
 // {
@@ -372,7 +401,11 @@ void send_HA_discovery(){
 //     "identifiers": ["root_topic_project_topic_001"]
 //   }
 // }
-  client.publish(("homeassistant/text/" + root_topic + "/" + project_topic + "_set_user_id/config").c_str(), set_user_id_payload.c_str(), true);
+  Serial.println("Sending Payload:");
+  Serial.println(last_match_payload.c_str());
+  bool set_user_id_payload_out = client.publish(("homeassistant/text/" + root_topic + "/" + project_topic + "_set_user_id/config").c_str(), set_user_id_payload.c_str(), true);
+  Serial.print("Code: ");
+  Serial.println(set_user_id_payload_out);
 
   std::string set_user_name_payload = "{\"command_topic\":\"" + root_topic + "/" + project_topic + "/set_user_name\",\"value_template\":\"{{ value_json.user_name }}\",\"unique_id\":\"" + root_topic + "_" + project_topic + "_set_user_name\",\"name\":\"User Name Input " + project_topic + "\",\"device\":{\"identifiers\":[\"" + root_topic + "_" + project_topic + "_001\"]}}";
 // {
@@ -384,14 +417,17 @@ void send_HA_discovery(){
 //     "identifiers": ["root_topic_project_topic_001"]
 //   }
 // }
-  client.publish(("homeassistant/text/" + root_topic + "/" + project_topic + "_set_user_name/config").c_str(), set_user_name_payload.c_str(), true);
-
+  Serial.println("Sending Payload:");
+  Serial.println(last_match_payload.c_str());
+  bool set_user_name_payload_out = client.publish(("homeassistant/text/" + root_topic + "/" + project_topic + "_set_user_name/config").c_str(), set_user_name_payload.c_str(), true);
+  Serial.print("Code: ");
+  Serial.println(set_user_name_payload_out);
 }
 
 void connect_mqtt() {
   while (!client.connected()) {
     Serial.print("Attempting MQTT connection...");
-    std::string topic = root_topic +"/"+project_topic;
+    std::string topic = root_topic +"/"+project_topic +"/#"; // Multilevel wildcard for all project topics
     if (client.connect(hostname.c_str(), mqtt_user.c_str(), mqtt_password.c_str())) {
       Serial.println("connected");
       client.subscribe(topic.c_str());
@@ -408,9 +444,15 @@ void connect_mqtt() {
 void setup_mqtt() {
   Serial.println("Connecting to MQTT...");
   client.setServer(mqtt_server.c_str(), mqtt_port);
+  if (client.setBufferSize(mqtt_buffer_size) != true){
+    Serial.println("Failed to resize MQTT message buffer size. Restarting...");
+    ESP.restart();
+  }
   client.setCallback(callback);
 
   connect_mqtt();
+  // auto out = client.publish("Test", "Hello", true);
+  // Serial.println(out);
   Serial.println("Sending HA discovery...");
   send_HA_discovery(); // send MQTT payload for HA MQTT discovery
 
@@ -431,7 +473,7 @@ void loop() {
     ESP.restart();
   }
   if (!client.connected()){
-    Serial.println("MQTT client disconnected. Restarting...");
+    Serial.println("MQTT client disconnected. Reconnecting...");
     connect_mqtt();
   }
   client.loop();
