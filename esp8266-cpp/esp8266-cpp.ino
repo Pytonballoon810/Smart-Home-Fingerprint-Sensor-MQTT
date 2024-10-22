@@ -26,6 +26,7 @@ const std::string manufacturer = "TFT"; // Optional: Manufacturer displayed in H
 const std::string model = "AS608"; // Optional
 const std::string hw_version = "1.0.0"; // Optional: Hardware Version of the device
 const std::string sw_version = "1.0.0"; // Optional: Software Version of the device
+const std::string sensor_password = SECRET_SENSOR_PASSWORD; // Required: The password for the sensor module itself. Required to store and read data from the fingerprint sensor without compromising security.
 
 const int sensor_tx = 12; // GPIO pin on the ESP. D6
 const int sensor_rx = 14; // GPIO pin on the ESP. D5
@@ -105,7 +106,7 @@ void callback(char* topic, byte* payload, unsigned int length){
   Serial.println(topic_str.c_str());
   Serial.println(learning_topic.c_str());
 
-  if (topic_str.compare(learning_topic) == 0) {
+  if ((topic_str.compare(learning_topic) == 0) and message.compare("PRESS")) {
     // Handle set learning mode
     Serial.println("Ready to enroll a fingerprint!");
     Serial.println("Please type in the ID # (from 1 to 127) you want to save this finger as...");
