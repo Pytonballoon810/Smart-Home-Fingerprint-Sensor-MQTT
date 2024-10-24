@@ -32,6 +32,8 @@ const std::string sw_version = "1.0.0";                    // Optional: Software
 const int sensor_tx = 12;  // GPIO pin on the ESP. D6
 const int sensor_rx = 14;  // GPIO pin on the ESP. D5
 
+const bool clear_database_on_reflash = false;  // Wether or not to clear the database when flashing the image
+
 std::string user_name;  // Variable is set by MQTT callback
 int user_id = -1;       // Variable is set by MQTT callback
 
@@ -40,7 +42,7 @@ std::string status;
 std::string match_state = "Waiting...";
 std::string last_match;
 std::string template_database;
-int template_count;
+int template_count = 0;
 volatile int finger_status = -1;
 std::map<int, std::string> id_to_finger;
 
@@ -58,13 +60,13 @@ PubSubClient client(wifiClient);  // Initiate PubSubClient library
 
 // Function to convert the map to a YAML formatted string
 std::string mapToYAML(const std::map<int, std::string>& numberToString) {
-    std::string yamlStr;
-    
-    for (const auto& pair : numberToString) {
-        yamlStr += std::to_string(pair.first) + ": \"" + pair.second + "\"\n";
-    }
+  std::string yamlStr;
 
-    return yamlStr;
+  for (const auto& pair : numberToString) {
+    yamlStr += std::to_string(pair.first) + ": \"" + pair.second + "\"\n";
+  }
+
+  return yamlStr;
 }
 
 void setup_wifi() {
@@ -172,7 +174,7 @@ void publish_mqtt(std::string sub_topic, std::string payload, bool retain = fals
   } else {
     out = client.publish(topic.c_str(), payload.c_str(), retain);
     if (out != 1) {
-      error = "Had trouble publishing to " + topic +".";
+      error = "Had trouble publishing to " + topic + ".";
     }
   }
   Serial.println(error.c_str());
@@ -276,7 +278,7 @@ void send_HA_discovery() {
   //   }
   // }
   Serial.println("Sending Payload:");
-  Serial.println(last_match_payload.c_str());
+  Serial.println(set_learning_mode_payload.c_str());
   bool set_learning_mode_payload_out = client.publish(("homeassistant/button/" + root_topic + "/" + project_topic + "_set_learning_mode/config").c_str(), set_learning_mode_payload.c_str(), true);
   Serial.print("Code: ");
   Serial.println(set_learning_mode_payload_out);
@@ -292,7 +294,7 @@ void send_HA_discovery() {
   //   }
   // }
   Serial.println("Sending Payload:");
-  Serial.println(last_match_payload.c_str());
+  Serial.println(delete_user_payload.c_str());
   bool delete_user_payload_out = client.publish(("homeassistant/button/" + root_topic + "/" + project_topic + "_delete_user/config").c_str(), delete_user_payload.c_str(), true);
   Serial.print("Code: ");
   Serial.println(delete_user_payload_out);
@@ -312,7 +314,7 @@ void send_HA_discovery() {
   // Numbers from 100 to 162
   // }
   Serial.println("Sending Payload:");
-  Serial.println(last_match_payload.c_str());
+  Serial.println(set_user_id_payload.c_str());
   bool set_user_id_payload_out = client.publish(("homeassistant/text/" + root_topic + "/" + project_topic + "_set_user_id/config").c_str(), set_user_id_payload.c_str(), true);
   Serial.print("Code: ");
   Serial.println(set_user_id_payload_out);
@@ -332,7 +334,7 @@ void send_HA_discovery() {
   // Contains at most 3 spaces.
   // }
   Serial.println("Sending Payload:");
-  Serial.println(last_match_payload.c_str());
+  Serial.println(set_user_name_payload.c_str());
   bool set_user_name_payload_out = client.publish(("homeassistant/text/" + root_topic + "/" + project_topic + "_set_user_name/config").c_str(), set_user_name_payload.c_str(), true);
   Serial.print("Code: ");
   Serial.println(set_user_name_payload_out);
@@ -355,11 +357,19 @@ void setup_mqtt() {
   Serial.println("MQTT set up!");
 }
 
+
+void set_template_count() {
+  sensor.getTemplateCount();
+  template_count = sensor.templateCount;
+  client.publish((root_topic + "/" + project_topic + "/template_count").c_str(), (std::to_string(template_count)).c_str(), true);
+}
+
 void setup_sensor() {
   sensor.begin(57600);
   if (sensor.verifyPassword()) {
     client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Found fingerprint sensor!");
     // Serial.println("Found fingerprint sensor!");
+    set_template_count();
   } else {
     client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Did not find fingerprint sensor :( Restarting...");
     // Serial.println("Did not find fingerprint sensor :( \n Restarting...");
@@ -424,7 +434,9 @@ void callback(char* topic, byte* payload, unsigned int length) {
     user_name = message;
   } else if (topic_str.compare(template_count_topic) == 0) {
     // Handle set user name
-    publish_mqtt("/template_database", mapToYAML(id_to_finger).c_str());
+    template_database = mapToYAML(id_to_finger);
+    Serial.println(template_database.c_str());
+    publish_mqtt("/template_database", template_database.c_str());
   }
 }
 
@@ -432,7 +444,7 @@ uint8_t get_fingerprint_enroll() {
   mode = "Reading";
 
   // Should be unnecessary as we use a regex to check the input in HA directly but some request make it through anyways
-  if (user_id <= 0 && user_id > max_templates) {  // Test for valid user ID, limited by sensor used
+  if ((user_id <= 0) || (user_id > max_templates)) {  // Test for valid user ID, limited by sensor used
     return 1;
   }
 
@@ -443,21 +455,21 @@ uint8_t get_fingerprint_enroll() {
     switch (p) {
       case FINGERPRINT_OK:
         Serial.println("Image taken");
-        client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Image taken");
+        // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Image taken");
         break;
       case FINGERPRINT_NOFINGER:
         break;
       case FINGERPRINT_PACKETRECIEVEERR:
         Serial.println("Communication error");
-        client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Communication error");
+        // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Communication error");
         break;
       case FINGERPRINT_IMAGEFAIL:
         Serial.println("Imaging error");
-        client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Imaging error");
+        // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Imaging error");
         break;
       default:
         Serial.println("Unknown error");
-        client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Unknown error");
+        // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Unknown error");
         break;
     }
   }
@@ -468,27 +480,27 @@ uint8_t get_fingerprint_enroll() {
   switch (p) {
     case FINGERPRINT_OK:
       Serial.println("Image converted");
-      client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Image converted");
+      // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Image converted");
       break;
     case FINGERPRINT_IMAGEMESS:
       Serial.println("Image too messy");
-      client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Image too messy");
+      // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Image too messy");
       return p;
     case FINGERPRINT_PACKETRECIEVEERR:
       Serial.println("Communication error");
-      client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Communication error");
+      // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Communication error");
       return p;
     case FINGERPRINT_FEATUREFAIL:
       Serial.println("Could not find fingerprint features");
-      client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Could not find fingerprint features");
+      // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Could not find fingerprint features");
       return p;
     case FINGERPRINT_INVALIDIMAGE:
       Serial.println("Could not find fingerprint features");
-      client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Could not find fingerprint features");
+      // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Could not find fingerprint features");
       return p;
     default:
       Serial.println("Unknown error");
-      client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Unknown error");
+      // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Unknown error");
       return p;
   }
 
@@ -510,21 +522,21 @@ uint8_t get_fingerprint_enroll() {
     switch (p) {
       case FINGERPRINT_OK:
         Serial.println("Image taken");
-        client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Image taken");
+        // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Image taken");
         break;
       case FINGERPRINT_NOFINGER:
         break;
       case FINGERPRINT_PACKETRECIEVEERR:
         Serial.println("Communication error");
-        client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Communication error");
+        // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Communication error");
         break;
       case FINGERPRINT_IMAGEFAIL:
         Serial.println("Imaging error");
-        client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Imaging error");
+        // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Imaging error");
         break;
       default:
         Serial.println("Unknown error");
-        client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Unknown error");
+        // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Unknown error");
         break;
     }
   }
@@ -535,49 +547,49 @@ uint8_t get_fingerprint_enroll() {
   switch (p) {
     case FINGERPRINT_OK:
       Serial.println("Image converted");
-      client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Image converted");
+      // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Image converted");
       break;
     case FINGERPRINT_IMAGEMESS:
       Serial.println("Image too messy");
-      client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Image too messy");
+      // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Image too messy");
       return p;
     case FINGERPRINT_PACKETRECIEVEERR:
       Serial.println("Communication error");
-      client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Communication error");
+      // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Communication error");
       return p;
     case FINGERPRINT_FEATUREFAIL:
       Serial.println("Could not find fingerprint features");
-      client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Could not find fingerprint features");
+      // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Could not find fingerprint features");
       return p;
     case FINGERPRINT_INVALIDIMAGE:
       Serial.println("Could not find fingerprint features");
-      client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Could not find fingerprint features");
+      // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Could not find fingerprint features");
       return p;
     default:
       Serial.println("Unknown error");
-      client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Unknown error");
+      // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Unknown error");
       return p;
   }
 
   // OK converted!
   Serial.print("Creating model for #");
   Serial.println(user_id);
-  client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Creating model");
+  // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Creating model");
   p = sensor.createModel();
   if (p == FINGERPRINT_OK) {
     Serial.println("Prints matched!");
-    client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Prints matched for model");
+    // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Prints matched for model");
   } else if (p == FINGERPRINT_PACKETRECIEVEERR) {
     Serial.println("Communication error");
-    client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Communication error");
+    // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Communication error");
     return p;
   } else if (p == FINGERPRINT_ENROLLMISMATCH) {
     Serial.println("Fingerprints did not match");
-    client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Fingerprints did not match");
+    // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Fingerprints did not match");
     return p;
   } else {
     Serial.println("Unknown error");
-    client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Unknown error");
+    // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Unknown error");
     return p;
   }
 
@@ -589,22 +601,25 @@ uint8_t get_fingerprint_enroll() {
     Serial.println("Stored!");
     client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Stored!");
     delay(25);
-  } else if (p == FINGERPRINT_PACKETRECIEVEERR) {
-    Serial.println("Communication error");
-    client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Communication error");
-    return p;
-  } else if (p == FINGERPRINT_BADLOCATION) {
-    Serial.println("Could not store in that location");
-    client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Could not store in that location");
-    return p;
-  } else if (p == FINGERPRINT_FLASHERR) {
-    Serial.println("Error writing to flash");
-    client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Error writing to flash");
-    return p;
   } else {
-    Serial.println("Unknown error");
-    client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Unknown error");
-    return p;
+    client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Template could not be stored!");
+    if (p == FINGERPRINT_PACKETRECIEVEERR) {
+      Serial.println("Communication error");
+      // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Communication error");
+      return p;
+    } else if (p == FINGERPRINT_BADLOCATION) {
+      Serial.println("Could not store in that location");
+      // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Could not store in that location");
+      return p;
+    } else if (p == FINGERPRINT_FLASHERR) {
+      Serial.println("Error writing to flash");
+      // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Error writing to flash");
+      return p;
+    } else {
+      Serial.println("Unknown error");
+      // client.publish((root_topic + "/" + project_topic + "/status").c_str(), "Unknown error");
+      return p;
+    }
   }
   // Add a return value to satisfy the compiler
   return 1;
@@ -631,20 +646,17 @@ int get_fingerprint_read() {
   if (p != FINGERPRINT_OK) return -2;
 
   // found a match!
-  client.publish((root_topic + "/" + project_topic + "/match_state").c_str(), "Matched!");
   Serial.print("Found ID #");
   Serial.print(sensor.fingerID);
   Serial.print(" with confidence of ");
   Serial.println(sensor.confidence);
-  return sensor.fingerID;
-}
+  if (sensor.confidence >= 70) {
+    publish_mqtt("/match_state", "Matched!");
+    publish_mqtt("/last_match", id_to_finger[sensor.fingerID].c_str());
+    last_match = id_to_finger[sensor.fingerID];
+  } else publish_mqtt("/match_state", "Missmatch!");
 
-void set_template_count() {
-  sensor.getTemplateCount();
-  template_count = sensor.templateCount;
-  char templateCountStr[10];                   // Buffer to hold the string version of the integer
-  itoa(template_count, templateCountStr, 10);  // Convert integer to string (base 10)
-  client.publish((root_topic + "/" + project_topic + "/template_count").c_str(), templateCountStr, true);
+  return sensor.fingerID;
 }
 
 void delete_all_templates() {
@@ -662,11 +674,22 @@ void setup() {
   setup_mqtt();
 
   setup_sensor();
-  delete_all_templates();  // Mainly for debuggning purposses. Clears the database everytime a new image gets flashed
 
-  set_template_count();
-  publish_mqtt("/template_database", mapToYAML(id_to_finger).c_str());
-  client.publish((root_topic + "/" + project_topic + "/match_state").c_str(), "Waiting...");  // set initial match state
+  if (clear_database_on_reflash) delete_all_templates();  // Mainly for debuggning purposses. Clears the database everytime a new image gets flashed
+
+  for (const auto& pair : id_to_finger) {
+    Serial.print("ID: ");
+    Serial.print(pair.first);
+    Serial.print(", Name: ");
+    Serial.println(pair.second.c_str());
+  }
+
+  template_database = mapToYAML(id_to_finger);
+  publish_mqtt("/template_database", template_database.c_str());
+  Serial.println("Database:");
+  Serial.println(template_database.c_str());
+
+  publish_mqtt("/match_state", "Waiting...", true);  // Set default value for match state
 }
 
 void loop() {
@@ -697,6 +720,7 @@ void loop() {
     set_template_count();
   }
 
+  Serial.print(".");
   client.loop();
-  delay(50);  // DO NOT RUN AT FULL SPEED!
+  delay(100);  // DO NOT RUN AT FULL SPEED!
 }
